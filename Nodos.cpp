@@ -5,13 +5,14 @@
 #include <Adafruit_BME280.h>
 #include "esp_sleep.h"
 
-//=========== CLAVES OTAA (REEMPLAZA POR LAS REALES) ===========
-uint8_t devEui[] = { 0x70, 0xB3, 0xD5, 0x7E, 0xD0, 0x06, 0x53, 0xC9 };
+//=========== CLAVES OTAA ===========
+uint8_t devEui[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x06 };
 uint8_t appEui[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
-uint8_t appKey[] = { 0x91, 0x3F, 0xA7, 0x2B, 0x54, 0xCC, 0x89, 0x10,
-                     0xEF, 0xD2, 0x73, 0x41, 0x65, 0x9B, 0x20, 0x8D };
+uint8_t appKey[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x06 };
 
 //=========== DEFINICIONES QUE EXIGE LA LIBRERÍA (aunque uses OTAA) ===========
+// ABP (solo para satisfacer el linker; no se usan con OTAA)
 uint8_t nwkSKey[] = { 0x00,0x01,0x02,0x03,0x04,0x05,0x06,0x07,
                       0x08,0x09,0x0A,0x0B,0x0C,0x0D,0x0E,0x0F };
 uint8_t appSKey[] = { 0x0F,0x0E,0x0D,0x0C,0x0B,0x0A,0x09,0x08,
@@ -44,12 +45,22 @@ uint32_t appTxDutyCycle       = 60000;           // 60 s entre uplinks
 #define I2C_FREQ  400000
 
 // Alimentación sensor y batería
-#define VEXT_CTRL  36              // LOW=ON, HIGH=OFF
-#define VBAT_PIN    1              // ADC1_CH0
-#define VBAT_RATIO  2.00f          // calibra si hace falta
+#define VEXT_PIN   Vext   // pin que controla el MOSFET de Vext
+#define BME_CSB_PIN 45    // tu pin CSB del BME
+#define VBAT_PIN    1
+#define VBAT_RATIO  2.00f
 
 TwoWire I2CBME(1);
 Adafruit_BME280 bme;
+volatile bool loraTxDone = false;
+
+extern "C" void uplinkFinished(McpsConfirm_t *mcpsConfirm)
+{
+  // Aquí ya terminó TX + ventanas RX del uplink
+  loraTxDone = true;
+  // Si quieres, puedes imprimir algo rápido:
+  Serial.println("Callback uplinkFinished(): TX completo.");
+}
 
 // appData y appDataSize están declarados por la librería (extern)
 // deviceState, txDutyCycleTime también (¡no los declares ni con extern!)
@@ -57,9 +68,12 @@ Adafruit_BME280 bme;
 // Empaqueta: T*100, H*100, P[hPa], Vbat[mV]  => 8 bytes
 static void prepareTxFrame(uint8_t port)
 {
-  // Enciende Vext para el BME
-  pinMode(VEXT_CTRL, OUTPUT);
-  digitalWrite(VEXT_CTRL, LOW);
+  // Enciende Vext y quita el back-power por CSB
+  pinMode(VEXT_PIN, OUTPUT);
+  pinMode(BME_CSB_PIN, OUTPUT);
+
+  digitalWrite(VEXT_PIN, HIGH);   // Vext ON (como en tu prueba)
+  digitalWrite(BME_CSB_PIN, HIGH); // CSB alto -> modo I2C sin back-power raro
   delay(20);
 
   I2CBME.begin(BME_SDA, BME_SCL, I2C_FREQ);
@@ -98,13 +112,19 @@ static void prepareTxFrame(uint8_t port)
   appData[4] = (uint8_t)(p >> 8); appData[5] = (uint8_t)(p & 0xFF);
   appData[6] = (uint8_t)(v >> 8); appData[7] = (uint8_t)(v & 0xFF);
 
-  // Apaga Vext
-  digitalWrite(VEXT_CTRL, HIGH);
+  // Apaga Vext y baja CSB para evitar back-power cuando no hay Vcc
+  digitalWrite(BME_CSB_PIN, LOW);
+  digitalWrite(VEXT_PIN, LOW);
 }
+
 
 void setup() {
   Serial.begin(115200);
   Mcu.begin(HELTEC_BOARD, SLOW_CLK_TPYE);
+  pinMode(VEXT_PIN, OUTPUT);
+  pinMode(BME_CSB_PIN, OUTPUT);
+  digitalWrite(BME_CSB_PIN, LOW);
+  digitalWrite(VEXT_PIN, LOW);   // BME off al iniciar
 }
 
 void loop()
@@ -144,11 +164,36 @@ void loop()
       break;
     }
 
-    case DEVICE_STATE_SLEEP:
-    {
-      LoRaWAN.sleep(loraWanClass);
-      break;
-    }
+        case DEVICE_STATE_SLEEP:
+      {
+        // Mientras el uplink sigue en proceso, dejamos que la librería haga su sueño ligero
+        if (!loraTxDone) {
+          LoRaWAN.sleep(loraWanClass);
+          break;
+        }
+
+        // Aquí sabemos, por McpsConfirm, que el uplink terminó
+        Serial.println("TX confirmado por McpsConfirm, entrando a DEEP SLEEP...");
+        Serial.flush();
+
+        // Apaga Vext y CSB para que el BME no quede back-powered
+        pinMode(VEXT_PIN, OUTPUT);
+        pinMode(BME_CSB_PIN, OUTPUT);
+        digitalWrite(BME_CSB_PIN, LOW);
+        digitalWrite(VEXT_PIN, LOW);
+
+        // 2) Desmontar I2C y dejar SDA/SCL en alta impedancia
+        I2CBME.end();                     // suelta el bus I2C
+        pinMode(BME_SDA, INPUT);
+        pinMode(BME_SCL, INPUT);
+        // Asegúrate que no haya pull-ups internos
+        digitalWrite(BME_SDA, LOW);       // en modo INPUT, esto quita el pull-up interno
+        digitalWrite(BME_SCL, LOW);
+
+        esp_sleep_enable_timer_wakeup((uint64_t)SLEEP_SECONDS * 1000000ULL);
+        esp_deep_sleep_start();
+        break;  // no debería volver
+      }
 
     default:
     {
