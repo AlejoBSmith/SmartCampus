@@ -11,6 +11,13 @@ The node enters **ESP32 deep sleep** only after the LoRaMAC stack has finished t
 - BME280 breakout (I²C)
 - External battery / USB power
 
+- VCC -> 36 (Vext)
+- GND -> GND
+- SCL -> 42
+- SDA -> 41
+- CSB -> 45
+- SDO -> GND
+
 ---
 
 ## Main idea
