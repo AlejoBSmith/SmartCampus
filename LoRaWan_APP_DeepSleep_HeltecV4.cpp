@@ -1,4 +1,4 @@
-#include <LoRaWan_APP.h>
+#include <LoRaWan_APP_DeepSleep_HeltecV4.h>
 #include <Arduino.h>
 #if !defined(HT_DE01)&&!defined(WIFI_Kit_32)&&!defined(WIFI_Kit_32_V3)
 #if(LoraWan_RGB==1)
