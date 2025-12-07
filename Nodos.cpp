@@ -1,5 +1,5 @@
 #include "Arduino.h"
-#include "LoRaWan_APP.h"
+#include "LoRaWan_APP_DeepSleep_HeltecV4.h"
 #include <Wire.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BME280.h>
