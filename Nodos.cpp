@@ -98,28 +98,8 @@ static void prepareTxFrame(uint8_t port)
   // Batería
   analogReadResolution(12);
   analogSetPinAttenuation(VBAT_PIN, ADC_11db);
-
-  constexpr uint8_t NUM_SAMPLES = 10;
-  static_assert(NUM_SAMPLES >= 3, "NUM_SAMPLES must be >= 3");
-
-  uint32_t sumAll = 0;
-  uint32_t minVal = UINT32_MAX;
-  uint32_t maxVal = 0;
-
-  for (uint8_t i = 0; i < NUM_SAMPLES; i++) {
-    uint32_t v = analogReadMilliVolts(VBAT_PIN);
-
-    sumAll += v;
-
-    delay(50);
-  }
-
-  // promedio recortado: quita 1 mínimo y 1 máximo (aunque sean iguales)
-  uint32_t avg_mV = (sumAll) / (NUM_SAMPLES);
-
-  uint16_t vbat_mV = (uint16_t)(avg_mV * VBAT_RATIO + 0.5f);
-
-
+  uint16_t vbat_mV = (uint16_t)(analogReadMilliVolts(VBAT_PIN) * VBAT_RATIO + 0.5f);
+  
   // Empaque binario
   int16_t t = (int16_t)(T * 100);
   int16_t h = (int16_t)(H * 100);
