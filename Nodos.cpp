@@ -6,10 +6,12 @@
 #include "esp_sleep.h"
 
 //=========== CLAVES OTAA ===========
-uint8_t devEui[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+uint8_t devEui[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x30 }; //Islas calor 0x01, 0x0n. Ruido 0x02, 0x0n
 uint8_t appEui[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
 uint8_t appKey[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+                     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x30 }; //Islas calor 0x01, 0x0n. Ruido 0x02, 0x0n
+
+// 06: Test oficina
 
 //=========== DEFINICIONES QUE EXIGE LA LIBRERÍA (aunque uses OTAA) ===========
 // ABP (solo para satisfacer el linker; no se usan con OTAA)
@@ -47,8 +49,10 @@ uint32_t appTxDutyCycle       = 60000;           // 60 s entre uplinks
 // Alimentación sensor y batería
 #define VEXT_PIN   Vext   // pin que controla el MOSFET de Vext
 #define BME_CSB_PIN 45    // tu pin CSB del BME
+#define ADC_CTRL_PIN 37     // IMPORTANTÍSIMO en V4 para leer batería
 #define VBAT_PIN    1
-#define VBAT_RATIO  2.00f
+// En V4, el divisor es 390k/100k -> VBAT = Vadc * (100+390)/100 = 4.9  :contentReference[oaicite:1]{index=1}
+#define VBAT_RATIO   4.9f
 
 TwoWire I2CBME(1);
 Adafruit_BME280 bme;
@@ -96,10 +100,20 @@ static void prepareTxFrame(uint8_t port)
   }
 
   // Batería
+  pinMode(ADC_CTRL_PIN, OUTPUT);
+  digitalWrite(ADC_CTRL_PIN, HIGH);  // habilita VBAT_Read en V4 :contentReference[oaicite:2]{index=2}
+  delay(10);
+
   analogReadResolution(12);
   analogSetPinAttenuation(VBAT_PIN, ADC_11db);
+  // warm-up del ADC
+  (void)analogReadMilliVolts(VBAT_PIN);
+  delay(2);
+
   uint16_t vbat_mV = (uint16_t)(analogReadMilliVolts(VBAT_PIN) * VBAT_RATIO + 0.5f);
-  
+
+  digitalWrite(ADC_CTRL_PIN, LOW);   // apagar después de medir
+
   // Empaque binario
   int16_t t = (int16_t)(T * 100);
   int16_t h = (int16_t)(H * 100);
@@ -115,14 +129,16 @@ static void prepareTxFrame(uint8_t port)
   // Apaga Vext y baja CSB para evitar back-power cuando no hay Vcc
   digitalWrite(BME_CSB_PIN, LOW);
   digitalWrite(VEXT_PIN, LOW);
+  digitalWrite(ADC_CTRL_PIN, LOW);
 }
-
 
 void setup() {
   Serial.begin(115200);
   Mcu.begin(HELTEC_BOARD, SLOW_CLK_TPYE);
   pinMode(VEXT_PIN, OUTPUT);
   pinMode(BME_CSB_PIN, OUTPUT);
+  pinMode(ADC_CTRL_PIN, OUTPUT);
+  digitalWrite(ADC_CTRL_PIN, LOW);   // <-- importante: apagado por defecto
   digitalWrite(BME_CSB_PIN, LOW);
   digitalWrite(VEXT_PIN, LOW);   // BME off al iniciar
 }
@@ -186,6 +202,9 @@ void loop()
         I2CBME.end();                     // suelta el bus I2C
         pinMode(BME_SDA, INPUT);
         pinMode(BME_SCL, INPUT);
+        digitalWrite(ADC_CTRL_PIN, LOW);
+        pinMode(ADC_CTRL_PIN, INPUT);
+        digitalWrite(ADC_CTRL_PIN, LOW);   // en INPUT, esto asegura pull-up OFF
         // Asegúrate que no haya pull-ups internos
         digitalWrite(BME_SDA, LOW);       // en modo INPUT, esto quita el pull-up interno
         digitalWrite(BME_SCL, LOW);
