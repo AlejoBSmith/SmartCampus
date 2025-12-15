@@ -11,7 +11,6 @@ uint8_t appEui[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
 uint8_t appKey[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
 
-
 //=========== DEFINICIONES QUE EXIGE LA LIBRERÍA (aunque uses OTAA) ===========
 // ABP (solo para satisfacer el linker; no se usan con OTAA)
 uint8_t nwkSKey[] = { 0x00,0x01,0x02,0x03,0x04,0x05,0x06,0x07,
@@ -75,7 +74,7 @@ static void prepareTxFrame(uint8_t port)
 
   digitalWrite(VEXT_PIN, HIGH);   // Vext ON (como en tu prueba)
   digitalWrite(BME_CSB_PIN, HIGH); // CSB alto -> modo I2C sin back-power raro
-  delay(20);
+  delay(50);
 
   I2CBME.begin(BME_SDA, BME_SCL, I2C_FREQ);
   bool ok = bme.begin(0x76, &I2CBME);
@@ -101,33 +100,25 @@ static void prepareTxFrame(uint8_t port)
   analogSetPinAttenuation(VBAT_PIN, ADC_11db);
 
   constexpr uint8_t NUM_SAMPLES = 10;
+  static_assert(NUM_SAMPLES >= 3, "NUM_SAMPLES must be >= 3");
 
-  uint32_t samples[NUM_SAMPLES];
-  uint32_t sum = 0;
+  uint32_t sumAll = 0;
   uint32_t minVal = UINT32_MAX;
   uint32_t maxVal = 0;
 
   for (uint8_t i = 0; i < NUM_SAMPLES; i++) {
     uint32_t v = analogReadMilliVolts(VBAT_PIN);
-    samples[i] = v;
 
-    if (v < minVal) minVal = v;
-    if (v > maxVal) maxVal = v;
+    sumAll += v;
 
     delay(50);
   }
 
-  // sumar todo menos el mínimo y el máximo
-  for (uint8_t i = 0; i < NUM_SAMPLES; i++) {
-    if (samples[i] != minVal && samples[i] != maxVal) {
-      sum += samples[i];
-    }
-  }
+  // promedio recortado: quita 1 mínimo y 1 máximo (aunque sean iguales)
+  uint32_t avg_mV = (sumAll) / (NUM_SAMPLES);
 
-  // promedio de los valores restantes
-  uint16_t vbat_mV = (uint16_t)(
-    (sum / (NUM_SAMPLES - 2)) * VBAT_RATIO + 0.5f
-  );
+  uint16_t vbat_mV = (uint16_t)(avg_mV * VBAT_RATIO + 0.5f);
+
 
   // Empaque binario
   int16_t t = (int16_t)(T * 100);
