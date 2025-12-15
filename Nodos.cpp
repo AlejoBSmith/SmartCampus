@@ -6,10 +6,11 @@
 #include "esp_sleep.h"
 
 //=========== CLAVES OTAA ===========
-uint8_t devEui[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x06 };
+uint8_t devEui[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
 uint8_t appEui[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
 uint8_t appKey[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x06 };
+                     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+
 
 //=========== DEFINICIONES QUE EXIGE LA LIBRERÍA (aunque uses OTAA) ===========
 // ABP (solo para satisfacer el linker; no se usan con OTAA)
@@ -37,7 +38,7 @@ uint8_t appPort               = 2;
 uint32_t appTxDutyCycle       = 60000;           // 60 s entre uplinks
 
 //=========== HARDWARE ===========
-#define SLEEP_SECONDS  60
+#define SLEEP_SECONDS  1800
 
 // BME280 en I2C1
 #define BME_SDA   41
@@ -98,7 +99,35 @@ static void prepareTxFrame(uint8_t port)
   // Batería
   analogReadResolution(12);
   analogSetPinAttenuation(VBAT_PIN, ADC_11db);
-  uint16_t vbat_mV = (uint16_t)(analogReadMilliVolts(VBAT_PIN) * VBAT_RATIO + 0.5f);
+
+  constexpr uint8_t NUM_SAMPLES = 10;
+
+  uint32_t samples[NUM_SAMPLES];
+  uint32_t sum = 0;
+  uint32_t minVal = UINT32_MAX;
+  uint32_t maxVal = 0;
+
+  for (uint8_t i = 0; i < NUM_SAMPLES; i++) {
+    uint32_t v = analogReadMilliVolts(VBAT_PIN);
+    samples[i] = v;
+
+    if (v < minVal) minVal = v;
+    if (v > maxVal) maxVal = v;
+
+    delay(50);
+  }
+
+  // sumar todo menos el mínimo y el máximo
+  for (uint8_t i = 0; i < NUM_SAMPLES; i++) {
+    if (samples[i] != minVal && samples[i] != maxVal) {
+      sum += samples[i];
+    }
+  }
+
+  // promedio de los valores restantes
+  uint16_t vbat_mV = (uint16_t)(
+    (sum / (NUM_SAMPLES - 2)) * VBAT_RATIO + 0.5f
+  );
 
   // Empaque binario
   int16_t t = (int16_t)(T * 100);
